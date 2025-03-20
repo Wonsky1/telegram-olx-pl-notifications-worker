@@ -1,19 +1,18 @@
 import time
-from db.database import FlatRecord, MonitoringTask, get_db
-
 import logging
 from datetime import datetime, timedelta
 from typing import List
 
+import validators
+import requests
+from bs4 import BeautifulSoup
+
 from core.config import settings
 from prompts import get_description_summary_prompt
 from tools.models import Flat
-import requests
-from bs4 import BeautifulSoup
-from core.config import settings
+from db.database import FlatRecord, MonitoringTask
 
-import validators
-import requests
+logger = logging.getLogger(__name__)
 
 async def get_description_summary(description: str) -> str:
     response = await settings.GENERATIVE_MODEL.ainvoke(
@@ -31,7 +30,7 @@ def is_time_within_last_n_minutes(
             datetime.strptime(time_str, time_format) + timedelta(minutes=60)
         ).time()
     except ValueError:
-        logging.error(f"Invalid time format: {time_str}")
+        logger.error(f"Invalid time format: {time_str}")
         return False
 
     now = datetime.now()
@@ -62,10 +61,9 @@ def get_valid_url(url: str, fallback_url: str) -> str:
     return url if is_valid_and_accessible(url) else fallback_url
 
 
-
 async def get_new_flats(url: str = settings.URL) -> List[Flat]:
     url = get_valid_url(url, settings.URL)
-    logging.info(f"Getting new flats at {datetime.now().strftime('%H:%M')}")
+    logger.info(f"Getting new flats at {datetime.now().strftime('%H:%M')}")
     result = []
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -75,7 +73,7 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     }
     response = requests.get(url, headers=headers)
-    logging.info(response.status_code)
+    logger.info(f"Response status code: {response.status_code}")
     soup = BeautifulSoup(response.text, "html.parser")
     divs = soup.find_all("div", attrs={"data-testid": "l-card"})
     for div in divs[:10]: # TODO RM
@@ -83,6 +81,7 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
             strip=True
         )
         if not "Dzisiaj" in location_date:
+            logger.debug(f"Skipping flat not from today: {location_date}")
             continue
 
         location, time = location_date.split("Dzisiaj o ")
@@ -91,6 +90,7 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
             location = location[:-1]
         is_within = is_time_within_last_n_minutes(time)
         if not is_within:
+            logger.debug(f"Skipping flat with time outside window: {time}")
             continue
 
         image_url = None
@@ -113,16 +113,18 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
                 description = get_flat_description(flat_url)
                 description = await get_description_summary(description)
                 if not description:
+                    logger.error(f"Error generating description for flat {flat_url}")
                     raise Exception(f"error generating description for flat {flat_url}")
             except Exception as e:
-                description = f"Failed to load description for email {flat_url}: {e}"
+                logger.error(f"Failed to load description for flat {flat_url}: {e}")
+                description = f"Failed to load description for flat {flat_url}: {e}"
 
         title = title.get_text(strip=True)
 
         time_provided = datetime.strptime(time, "%H:%M").time()
         datetime_provided = datetime.combine(datetime.now(), time_provided)
         created_at = datetime_provided.strftime("%d.%m.%Y - *%H:%M*")
-        logging.info(f"Saving flat with created_at: {created_at}")
+        logger.debug(f"Saving flat with created_at: {created_at}")
 
         result.append(
             Flat(
@@ -136,7 +138,7 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
                 description=description
             )
         )
-    logging.info(f"Found {len(result)} flats")
+    logger.info(f"Found {len(result)} flats")
     return result
 
 
@@ -152,15 +154,15 @@ async def find_new_flats(db):
     """Periodically check for new flats and store them in the database."""
     distinct_urls = db.query(MonitoringTask.url).distinct().all()
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting flat monitoring loop")
+    logger.info(f"Starting flat monitoring loop")
     
     for (url,) in distinct_urls:
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Fetching flats for URL: {url}")
+        logger.info(f"Fetching flats for URL: {url}")
         try:
             flats = await get_new_flats(url=url)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(flats)} flats for URL: {url}")
+            logger.info(f"Found {len(flats)} flats for URL: {url}")
         except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Failed to fetch flats for URL: {url} — {e}")
+            logger.error(f"Failed to fetch flats for URL: {url} — {e}", exc_info=True)
             continue
         
         new_count = 0
@@ -181,14 +183,14 @@ async def find_new_flats(db):
                 db.add(flat_record)
                 db.commit()
                 new_count += 1
-                print(f"    ➕ New flat added: {flat.title} | {flat.flat_url}")
+                logger.info(f"New flat added: {flat.title} | {flat.flat_url}")
             else:
-                print(f"    ⏩ Flat already exists: {flat.title} | {flat.flat_url}")
+                logger.debug(f"Flat already exists: {flat.title} | {flat.flat_url}")
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Finished processing URL: {url}. New flats added: {new_count}")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sleeping before next URL...")
+        logger.info(f"Finished processing URL: {url}. New flats added: {new_count}")
+        logger.debug(f"Sleeping before next URL...")
 
         # Optional: sleep between URL requests to avoid hitting server too hard
         time.sleep(3)
 
-    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] All URLs processed.")
+    logger.info("All URLs processed.")
