@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from core.config import settings
 
-DATABASE_URL = "postgresql://myuser:mypassword@localhost:5432/mydatabase"
+DATABASE_URL = settings.DATABASE_URL
 
 
 engine = create_engine(DATABASE_URL)

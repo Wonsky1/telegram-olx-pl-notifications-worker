@@ -28,6 +28,8 @@ class Settings(BaseSettings):
 
     DEFAULT_LAST_MINUTES_GETTING: int = 75
 
+    DATABASE_URL: str
+
     # Model Configuration
     GROQ_API_KEY: Optional[str] = None
     GROQ_MODEL_NAME: Optional[str] = None
