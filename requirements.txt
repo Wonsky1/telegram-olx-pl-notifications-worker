@@ -1,0 +1,9 @@
+validators
+python-dotenv
+requests
+beautifulsoup4
+sqlalchemy
+pydantic-settings
+
+langchain-groq
+psycopg2-binary
