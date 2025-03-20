@@ -5,6 +5,7 @@ import sys
 from tools.utils import find_new_flats
 from db.database import init_db
 from db.database import get_db
+from core.config import settings
 
 # Configure logging
 logging.basicConfig(
@@ -28,8 +29,8 @@ async def worker_main():
             await find_new_flats(db)
         except Exception as e:
             logger.error(f"Error in flat finder: {e}", exc_info=True)
-        logger.info("Sleeping for 60 seconds before next cycle")
-        await asyncio.sleep(60)
+        logger.info(f"Sleeping for {settings.CYCLE_FREQUENCY_SECONDS} seconds before next cycle")
+        await asyncio.sleep(settings.CYCLE_FREQUENCY_SECONDS)
 
 if __name__ == "__main__":
     try:

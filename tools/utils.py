@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import List
 
-import validators
 import requests
 from bs4 import BeautifulSoup
 
@@ -44,26 +43,23 @@ def is_time_within_last_n_minutes(
     return time_provided >= n_minutes_ago
 
 
-def is_valid_and_accessible(url: str) -> bool:
-    """Check if a URL is valid and returns a successful response."""
-    if not validators.url(url):
-        return False
-
-    try:
-        response = requests.get(url)
-        return response.status_code == 200
-    except requests.RequestException:
-        return False
+def get_flat_description(flat_url: str) -> str:
+    response = requests.get(flat_url)
+    soup = BeautifulSoup(response.text, "html.parser")
+    description = soup.find("div", attrs={"data-cy": "ad_description"})
+    description = description.get_text(strip=True)
+    return description
 
 
-def get_valid_url(url: str, fallback_url: str) -> str:
-    """Return the provided URL if valid and accessible, otherwise return the fallback URL."""
-    return url if is_valid_and_accessible(url) else fallback_url
-
-
-async def get_new_flats(url: str = settings.URL) -> List[Flat]:
-    url = get_valid_url(url, settings.URL)
+async def get_new_flats(url: str = settings.URL, db=None) -> List[Flat]:
     logger.info(f"Getting new flats at {datetime.now().strftime('%H:%M')}")
+    
+    # Fetch existing flat URLs from database if db is provided
+    existing_urls = set()
+    if db:
+        existing_urls = {url[0] for url in db.query(FlatRecord.flat_url).all()}
+        logger.info(f"Found {len(existing_urls)} existing flats in database")
+    
     result = []
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -76,7 +72,9 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
     logger.info(f"Response status code: {response.status_code}")
     soup = BeautifulSoup(response.text, "html.parser")
     divs = soup.find_all("div", attrs={"data-testid": "l-card"})
-    for div in divs[:10]: # TODO RM
+    
+    skipped_count = 0
+    for div in divs[:]:
         location_date = div.find("p", attrs={"data-testid": "location-date"}).get_text(
             strip=True
         )
@@ -93,6 +91,20 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
             logger.debug(f"Skipping flat with time outside window: {time}")
             continue
 
+        # Extract the URL early to check for duplicates
+        title_div = div.find("div", attrs={"data-cy": "ad-card-title"})
+        a_tag = title_div.find("a")
+        flat_url = a_tag["href"]
+        if not flat_url.startswith("http"):
+            flat_url = "https://www.olx.pl" + flat_url
+            
+        # Check if this flat already exists in the database
+        if flat_url in existing_urls:
+            logger.debug(f"Skipping already existing flat: {flat_url}")
+            skipped_count += 1
+            continue
+            
+        # Continue processing only for new flats
         image_url = None
         img_tag = div.find("img")
         if img_tag and img_tag.has_attr("src"):
@@ -101,14 +113,12 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
         price_tag = div.find("p", attrs={"data-testid": "ad-price"})
         price = price_tag.get_text(strip=True)
 
-        title = div.find("div", attrs={"data-cy": "ad-card-title"})
-        a_tag = title.find("a")
+        title = title_div.get_text(strip=True)
 
-        flat_url = a_tag["href"]
+        # Process description
         if "otodom" in flat_url:
-            description = "otodom link"
+            description = "Otodom link will be implemented soon"
         else:
-            flat_url = "https://www.olx.pl" + flat_url
             try:
                 description = get_flat_description(flat_url)
                 description = await get_description_summary(description)
@@ -119,10 +129,8 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
                 logger.error(f"Failed to load description for flat {flat_url}: {e}")
                 description = f"Failed to load description for flat {flat_url}: {e}"
 
-        title = title.get_text(strip=True)
-
         time_provided = datetime.strptime(time, "%H:%M").time()
-        datetime_provided = datetime.combine(datetime.now(), time_provided)
+        datetime_provided = datetime.combine(datetime.now(), time_provided) + timedelta(hours=1)
         created_at = datetime_provided.strftime("%d.%m.%Y - *%H:%M*")
         logger.debug(f"Saving flat with created_at: {created_at}")
 
@@ -138,16 +146,9 @@ async def get_new_flats(url: str = settings.URL) -> List[Flat]:
                 description=description
             )
         )
-    logger.info(f"Found {len(result)} flats")
+    
+    logger.info(f"Found {len(result)} new flats, skipped {skipped_count} existing flats")
     return result
-
-
-def get_flat_description(flat_url: str) -> str:
-    response = requests.get(flat_url)
-    soup = BeautifulSoup(response.text, "html.parser")
-    description = soup.find("div", attrs={"data-cy": "ad_description"})
-    description = description.get_text(strip=True)
-    return description
 
 
 async def find_new_flats(db):
@@ -159,35 +160,30 @@ async def find_new_flats(db):
     for (url,) in distinct_urls:
         logger.info(f"Fetching flats for URL: {url}")
         try:
-            flats = await get_new_flats(url=url)
-            logger.info(f"Found {len(flats)} flats for URL: {url}")
+            # Pass the database session to get_new_flats for early duplicate checking
+            flats = await get_new_flats(url=url, db=db)
+            logger.info(f"Found {len(flats)} new flats for URL: {url}")
         except Exception as e:
             logger.error(f"Failed to fetch flats for URL: {url} — {e}", exc_info=True)
             continue
         
-        new_count = 0
+        # Add all flats to the database (they're already filtered)
         for flat in flats:
-            # Check if flat already exists in database
-            existing = db.query(FlatRecord).filter(FlatRecord.flat_url == flat.flat_url).first()
-            if not existing:
-                flat_record = FlatRecord(
-                    flat_url=flat.flat_url,
-                    title=flat.title,
-                    price=flat.price,
-                    location=flat.location,
-                    created_at=flat.created_at,
-                    created_at_pretty=flat.created_at_pretty,
-                    image_url=flat.image_url,
-                    description=flat.description
-                )
-                db.add(flat_record)
-                db.commit()
-                new_count += 1
-                logger.info(f"New flat added: {flat.title} | {flat.flat_url}")
-            else:
-                logger.debug(f"Flat already exists: {flat.title} | {flat.flat_url}")
+            flat_record = FlatRecord(
+                flat_url=flat.flat_url,
+                title=flat.title,
+                price=flat.price,
+                location=flat.location,
+                created_at=flat.created_at,
+                created_at_pretty=flat.created_at_pretty,
+                image_url=flat.image_url,
+                description=flat.description
+            )
+            db.add(flat_record)
+            db.commit()
+            logger.info(f"New flat added: {flat.title} | {flat.flat_url}")
 
-        logger.info(f"Finished processing URL: {url}. New flats added: {new_count}")
+        logger.info(f"Finished processing URL: {url}. New flats added: {len(flats)}")
         logger.debug(f"Sleeping before next URL...")
 
         # Optional: sleep between URL requests to avoid hitting server too hard

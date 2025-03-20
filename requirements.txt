@@ -1,4 +1,3 @@
-validators
 python-dotenv
 requests
 beautifulsoup4
