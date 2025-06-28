@@ -3,6 +3,7 @@ requests
 beautifulsoup4
 sqlalchemy
 pydantic-settings
+pytz
 
 langchain-groq
 psycopg2-binary

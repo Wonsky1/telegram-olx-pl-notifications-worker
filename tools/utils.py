@@ -2,6 +2,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 from typing import List
+import pytz
 
 import requests
 from bs4 import BeautifulSoup
@@ -25,22 +26,26 @@ def is_time_within_last_n_minutes(
 ) -> bool:
     time_format = "%H:%M"
     try:
-        time_provided = (
-            datetime.strptime(time_str, time_format) + timedelta(minutes=60)
-        ).time()
+        # Parse the time from OLX (which appears to be in UTC based on debugging)
+        parsed_time = datetime.strptime(time_str, time_format).time()
+        
+        # Get current time in UTC (since OLX seems to use UTC)
+        utc_tz = pytz.UTC
+        now_utc = datetime.now(utc_tz)
+        
+        # Create datetime object for the parsed time in UTC
+        time_provided_utc = utc_tz.localize(
+            datetime.combine(now_utc.date(), parsed_time)
+        )
+        
+        # Calculate n minutes ago in UTC
+        n_minutes_ago_utc = now_utc - timedelta(minutes=n)
+        
+        return time_provided_utc >= n_minutes_ago_utc
+        
     except ValueError:
         logger.error(f"Invalid time format: {time_str}")
         return False
-
-    now = datetime.now()
-    current_time = now.time()
-
-    # time_provided = (datetime.combine(now.date(), now.time())
-    n_minutes_ago = (
-        datetime.combine(now.date(), current_time) - timedelta(minutes=n)
-    ).time()
-
-    return time_provided >= n_minutes_ago
 
 
 def get_flat_description(flat_url: str) -> str:
@@ -64,9 +69,11 @@ async def get_new_flats(url: str = settings.URL, db=None) -> List[Flat]:
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+        "Accept-Language": "pl-PL,pl;q=0.9,en-GB;q=0.8,en;q=0.7",
         "Cache-Control": "max-age=0",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "X-Forwarded-For": "83.0.0.0",  # Polish IP range to get Polish timezone
+        "CF-IPCountry": "PL",
     }
     response = requests.get(url, headers=headers)
     logger.info(f"Response status code: {response.status_code}")
@@ -129,10 +136,25 @@ async def get_new_flats(url: str = settings.URL, db=None) -> List[Flat]:
                 logger.error(f"Failed to load description for flat {flat_url}: {e}")
                 description = f"Failed to load description for flat {flat_url}: {e}"
 
-        time_provided = datetime.strptime(time, "%H:%M").time()
-        datetime_provided = datetime.combine(datetime.now(), time_provided) + timedelta(hours=1)
-        created_at = datetime_provided.strftime("%d.%m.%Y - *%H:%M*")
-        logger.debug(f"Saving flat with created_at: {created_at}")
+        # Parse time and create timezone-aware datetime
+        parsed_time = datetime.strptime(time, "%H:%M").time()
+        utc_tz = pytz.UTC
+        now_utc = datetime.now(utc_tz)
+        
+        # Create datetime in UTC (since OLX appears to use UTC)
+        datetime_provided_utc = utc_tz.localize(
+            datetime.combine(now_utc.date(), parsed_time)
+        )
+        
+        # Convert to Polish timezone for both storage and display
+        poland_tz = pytz.timezone('Europe/Warsaw')
+        datetime_provided_poland = datetime_provided_utc.astimezone(poland_tz)
+        
+        # Store as naive datetime in Polish time (since most DBs don't handle timezones well)
+        datetime_provided = datetime_provided_poland.replace(tzinfo=None)
+        
+        created_at = datetime_provided_poland.strftime("%d.%m.%Y - *%H:%M*")
+        logger.debug(f"Saving flat - UTC: {datetime_provided_utc}, Poland: {datetime_provided_poland}, DB storage: {datetime_provided}")
 
         result.append(
             Flat(
