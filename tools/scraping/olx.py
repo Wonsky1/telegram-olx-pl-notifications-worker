@@ -12,7 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from core.config import settings
-from tools.models import Item
+from models import Item
 from tools.processing.description import DescriptionSummarizer
 from tools.utils.time_helpers import TimeUtils
 from .base import BaseScraper

@@ -14,7 +14,7 @@ import pytz
 from sqlalchemy.orm import Session
 
 from db.database import ItemRecord, MonitoringTask
-from tools.models import Item
+from models import Item
 from tools.processing.description import DescriptionSummarizer
 from tools.scraping.base import BaseScraper
 

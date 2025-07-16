@@ -9,7 +9,7 @@ from __future__ import annotations
 import abc
 from typing import List, Set
 
-from tools.models import Item
+from models import Item
 from tools.processing.description import DescriptionSummarizer  # noqa: F401 pylint: disable=cyclic-import
 
 
