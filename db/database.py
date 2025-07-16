@@ -22,14 +22,14 @@ class MonitoringTask(Base):
     chat_id = Column(String, unique=True, index=True)
     url = Column(String, nullable=False)
     last_updated = Column(DateTime, nullable=False)
-    last_got_flat = Column(DateTime, nullable=True)
+    last_got_item = Column(DateTime, nullable=True)
 
 
-class FlatRecord(Base):
-    __tablename__ = "flat_records"
+class ItemRecord(Base):
+    __tablename__ = "item_records"
     
     id = Column(Integer, primary_key=True, index=True)
-    flat_url = Column(String, unique=True, index=True)
+    item_url = Column(String, unique=True, index=True)
     title = Column(String)
     price = Column(String)
     location = Column(String)
@@ -37,6 +37,7 @@ class FlatRecord(Base):
     created_at_pretty = Column(String)
     image_url = Column(String, nullable=True)
     description = Column(String)
+    source_url = Column(String, nullable=False)
     first_seen = Column(DateTime, default=datetime.now)
 
 
@@ -77,43 +78,3 @@ def delete_task_by_chat_id(db, chat_id: str):
 def get_all_tasks(db):
     """Get all monitoring tasks from the database."""
     return db.query(MonitoringTask).all()
-
-
-def get_pending_tasks(db) -> List[MonitoringTask]:
-    """
-    Retrieve tasks where the last_got_flat is either None or older than DEFAULT_LAST_MINUTES_GETTING.
-    """
-    time_threshold = datetime.now() - timedelta(minutes=settings.DEFAULT_LAST_MINUTES_GETTING)
-    tasks = db.query(MonitoringTask).filter(
-        (MonitoringTask.last_got_flat == None) | 
-        (MonitoringTask.last_got_flat < time_threshold)
-    ).all()
-    return tasks
-
-
-def update_last_got_flat(db, chat_id: str):
-    """Update the last_got_flat timestamp for a given chat ID."""
-    task = get_task_by_chat_id(db, chat_id)
-    if task:
-        task.last_got_flat = datetime.now()
-        db.commit()
-
-def get_flats_to_send_for_task(db, task: MonitoringTask) -> List[FlatRecord]:
-    """
-    Get a list of FlatRecords that should be sent for a given MonitoringTask.
-    If the task has a 'last_got_flat' timestamp, return flats seen after that time.
-    Otherwise, return flats seen in the last DEFAULT_LAST_MINUTES_GETTING minutes.
-    """
-    flats_query = db.query(FlatRecord)
-
-    if task.last_got_flat:
-        flats_to_send = flats_query.filter(
-            FlatRecord.first_seen > task.last_got_flat
-        ).all()
-    else:
-        time_threshold = datetime.now() - timedelta(minutes=settings.DEFAULT_LAST_MINUTES_GETTING)
-        flats_to_send = flats_query.filter(
-            FlatRecord.first_seen > time_threshold
-        ).all()
-
-    return flats_to_send

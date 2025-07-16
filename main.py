@@ -2,7 +2,8 @@ import asyncio
 import logging
 import sys
 
-from tools.utils import find_new_flats
+from tools.monitoring.monitor import ItemMonitor
+from tools.scraping.olx import OLXScraper
 from db.database import init_db
 from db.database import get_db
 from core.config import settings
@@ -25,17 +26,18 @@ db = next(get_db())
 async def worker_main():
     while True:
         try:
-            logger.info("Starting new flat search cycle")
-            await find_new_flats(db)
+            logger.info("Starting new item search cycle")
+            monitor = ItemMonitor(db=db, scraper_cls=OLXScraper)
+            await monitor.run_once()
         except Exception as e:
-            logger.error(f"Error in flat finder: {e}", exc_info=True)
+            logger.error(f"Error in item finder: {e}", exc_info=True)
         logger.info(f"Sleeping for {settings.CYCLE_FREQUENCY_SECONDS} seconds before next cycle")
         await asyncio.sleep(settings.CYCLE_FREQUENCY_SECONDS)
 
 if __name__ == "__main__":
     try:
-        logger.info("Starting OLX flat notification worker")
+        logger.info("Starting OLX item notification worker")
         asyncio.run(worker_main())
     finally:
-        logger.info("Shutting down OLX flat notification worker")
+        logger.info("Shutting down OLX item notification worker")
         db.close()
