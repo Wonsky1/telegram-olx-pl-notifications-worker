@@ -1,14 +1,12 @@
 """Define configuration settings using Pydantic and manage environment variables."""
 
-import os
 from logging import getLogger
-from typing import Optional, List
+from typing import Optional
 
-from pydantic import ValidationInfo, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-
+from pydantic import ValidationInfo, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = getLogger(__name__)
 
@@ -25,9 +23,9 @@ class Settings(BaseSettings):
     URL: str
 
     DEFAULT_LAST_MINUTES_GETTING: int = 45
-    CYCLE_FREQUENCY_SECONDS: int = 5
+    CYCLE_FREQUENCY_SECONDS: int = 30
 
-    DATABASE_URL: str
+    OLX_DB_URL: str
 
     # Model Configuration
     GROQ_API_KEY: Optional[str] = None
@@ -47,9 +45,7 @@ class Settings(BaseSettings):
         if model_name:
             return ChatGroq(model_name=model_name, api_key=api_key)
         else:
-            raise ValueError(
-                "GROQ_MODEL_NAME must be set"
-            )
+            raise ValueError("GROQ_MODEL_NAME must be set")
 
 
 settings = Settings()

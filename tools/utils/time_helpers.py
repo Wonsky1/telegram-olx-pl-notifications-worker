@@ -39,7 +39,9 @@ class TimeUtils:
             parsed_time = datetime.strptime(time_str, time_format).time()
             utc_tz = pytz.UTC
             now_utc = datetime.now(utc_tz)
-            time_provided_utc = utc_tz.localize(datetime.combine(now_utc.date(), parsed_time))
+            time_provided_utc = utc_tz.localize(
+                datetime.combine(now_utc.date(), parsed_time)
+            )
             n_minutes_ago_utc = now_utc - timedelta(minutes=n)
             return time_provided_utc >= n_minutes_ago_utc
         except ValueError:

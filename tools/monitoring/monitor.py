@@ -11,9 +11,9 @@ from datetime import datetime
 from typing import Type
 
 import pytz
+from olx_db import ItemRecord, MonitoringTask
 from sqlalchemy.orm import Session
 
-from db.database import ItemRecord, MonitoringTask
 from models import Item
 from tools.processing.description import DescriptionSummarizer
 from tools.scraping.base import BaseScraper
@@ -38,7 +38,9 @@ class ItemMonitor:
     async def run_once(self):
         """Scrape each task URL once and persist new items."""
         distinct_urls = self.db.query(MonitoringTask.url).distinct().all()
-        logger.info("ItemMonitor starting scraping loop for %s URLs", len(distinct_urls))
+        logger.info(
+            "ItemMonitor starting scraping loop for %s URLs", len(distinct_urls)
+        )
 
         for (url,) in distinct_urls:
             try:
@@ -49,7 +51,9 @@ class ItemMonitor:
                     summarizer=self.summarizer,
                 )
             except Exception as exc:
-                logger.error("Failed fetching items for %s: %s", url, exc, exc_info=True)
+                logger.error(
+                    "Failed fetching items for %s: %s", url, exc, exc_info=True
+                )
                 continue
 
             self._persist_items(new_items, source_url=url)

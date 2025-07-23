@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import logging
-import time
+import re
 from datetime import datetime
 from typing import List, Set
 
+import httpx
 import pytz
-import requests
 from bs4 import BeautifulSoup
 
-from core.config import settings
 from models import Item
 from tools.processing.description import DescriptionSummarizer
 from tools.utils.time_helpers import TimeUtils
+
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,11 @@ class OLXScraper(BaseScraper):
         "CF-IPCountry": "PL",
     }
 
+    def __init__(self) -> None:
+        self.client = httpx.AsyncClient(
+            headers=self.HEADERS, timeout=10, follow_redirects=True
+        )
+
     async def fetch_new_items(
         self,
         url: str,
@@ -45,7 +50,7 @@ class OLXScraper(BaseScraper):
     ) -> List[Item]:
         logger.info("Fetching OLX items from %s", url)
 
-        response = requests.get(url, headers=self.HEADERS)
+        response = await self.client.get(url)
         logger.debug("OLX response status code: %s", response.status_code)
         soup = BeautifulSoup(response.text, "html.parser")
         divs = soup.find_all("div", attrs={"data-testid": "l-card"})
@@ -53,7 +58,9 @@ class OLXScraper(BaseScraper):
         new_items: List[Item] = []
         skipped_count = 0
         for div in divs:
-            location_date = div.find("p", attrs={"data-testid": "location-date"}).get_text(strip=True)
+            location_date = div.find(
+                "p", attrs={"data-testid": "location-date"}
+            ).get_text(strip=True)
             if "Dzisiaj" not in location_date:
                 logger.debug("Skipping non-today item: %s", location_date)
                 continue
@@ -83,7 +90,9 @@ class OLXScraper(BaseScraper):
             image_div = div.find("div", attrs={"data-testid": "image-container"})
             image_url = image_div.find("img")["src"] if image_div else ""
 
-            description = await self._process_description(item_url, summarizer)
+            description, highres = await self._fetch_item_details(item_url, summarizer)
+            if highres:
+                image_url = highres
 
             created_at, created_at_pretty = self._parse_times(time_str)
 
@@ -100,25 +109,65 @@ class OLXScraper(BaseScraper):
                 )
             )
 
-        logger.info("OLX scraper found %s new items, skipped %s existing", len(new_items), skipped_count)
+        logger.info(
+            "OLX scraper found %s new items, skipped %s existing",
+            len(new_items),
+            skipped_count,
+        )
         return new_items
 
-    async def _process_description(self, item_url: str, summarizer: DescriptionSummarizer) -> str:
+    async def _fetch_item_details(
+        self, item_url: str, summarizer: DescriptionSummarizer
+    ):
         if "otodom" in item_url:
-            return "Otodom link will be implemented soon"
+            return "Otodom link will be implemented soon", ""
 
         try:
-            raw_desc = self._get_item_description(item_url)
+            response = await self.client.get(item_url)
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            raw_desc = self._extract_description(soup)
             summary = await summarizer.summarize(raw_desc)
-            return summary or raw_desc[:500]  # Fallback to raw if summariser empty
+            description = summary or raw_desc[:500]
+
+            highres = self._extract_highres_image(soup)
+            return description, highres
         except Exception as exc:  # pragma: no cover
-            logger.error("Failed to load description for %s: %s", item_url, exc)
-            return f"Failed to load description: {exc}"
+            logger.error("Failed to load details for %s: %s", item_url, exc)
+            return f"Failed to load description: {exc}", ""
 
     @staticmethod
-    def _get_item_description(item_url: str) -> str:
-        response = requests.get(item_url)
-        soup = BeautifulSoup(response.text, "html.parser")
+    def _extract_highres_image(soup: BeautifulSoup) -> str:
+        """Return highest-quality image URL from item detail page if present."""
+        try:
+            img_tag = soup.find(
+                "img", attrs={"data-testid": re.compile(r"^swiper-image")}
+            )
+            if not img_tag:
+                return ""
+            if img_tag.get("src"):
+                return img_tag["src"]
+            srcset = img_tag.get("srcset", "")
+            if srcset:
+                variants = [v.strip() for v in srcset.split(",")]
+                best_url = ""
+                best_w = 0
+                for variant in variants:
+                    try:
+                        url_part, size_part = variant.split(" ")
+                        width = int(size_part.rstrip("w"))
+                        if width > best_w:
+                            best_w = width
+                            best_url = url_part
+                    except ValueError:
+                        continue
+                return best_url
+            return ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _extract_description(soup: BeautifulSoup) -> str:
         description_tag = soup.find("div", attrs={"data-cy": "ad_description"})
         return description_tag.get_text(strip=True) if description_tag else ""
 
@@ -127,9 +176,15 @@ class OLXScraper(BaseScraper):
         parsed_time = datetime.strptime(time_str, "%H:%M").time()
         utc_tz = pytz.UTC
         now_utc = datetime.now(utc_tz)
-        datetime_provided_utc = utc_tz.localize(datetime.combine(now_utc.date(), parsed_time))
+        datetime_provided_utc = utc_tz.localize(
+            datetime.combine(now_utc.date(), parsed_time)
+        )
         poland_tz = pytz.timezone("Europe/Warsaw")
         datetime_provided_pl = datetime_provided_utc.astimezone(poland_tz)
         datetime_naive_pl = datetime_provided_pl.replace(tzinfo=None)
         created_at_pretty = datetime_provided_pl.strftime("%d.%m.%Y - *%H:%M*")
         return datetime_naive_pl, created_at_pretty
+
+    async def close(self):
+        await self.client.aclose()
+        await super().close()

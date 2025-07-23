@@ -10,7 +10,9 @@ import abc
 from typing import List, Set
 
 from models import Item
-from tools.processing.description import DescriptionSummarizer  # noqa: F401 pylint: disable=cyclic-import
+from tools.processing.description import (  # noqa: F401 pylint: disable=cyclic-import
+    DescriptionSummarizer,
+)
 
 
 class BaseScraper(abc.ABC):

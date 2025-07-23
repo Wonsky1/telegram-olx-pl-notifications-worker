@@ -1,0 +1,22 @@
+default_stages: [pre-commit]
+default_language_version:
+  python: python3
+repos:
+- repo: https://github.com/PyCQA/autoflake
+  rev: v2.2.1
+  hooks:
+  - id: autoflake
+    description: "autoflake removes unused imports and unused variables from Python code"
+    args: ["--in-place", "--remove-all-unused-imports", "--remove-unused-variables", "--ignore-init-module-imports", "--expand-star-imports", "-r"]
+- repo: https://github.com/pycqa/isort
+  rev: 5.13.2
+  hooks:
+  - id: isort
+    name: isort (python)
+    description: "isort sorts imports alphabetically, and automatically separated into sections and by type"
+    args: ["--profile", "black", "--line-length 88"]
+- repo: https://github.com/psf/black-pre-commit-mirror
+  rev: 24.2.0
+  hooks:
+  - id: black
+    description: "black formats the code"

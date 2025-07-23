@@ -1,7 +1,7 @@
 python-dotenv
-requests
+httpx[http2]
 beautifulsoup4
-sqlalchemy
+olx-db-wonsky
 pydantic-settings
 pytz
 

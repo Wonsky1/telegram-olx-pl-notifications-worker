@@ -1,5 +1,15 @@
 class Item:
-    def __init__(self, title, price, image_url, created_at, location, item_url, description, created_at_pretty):
+    def __init__(
+        self,
+        title,
+        price,
+        image_url,
+        created_at,
+        location,
+        item_url,
+        description,
+        created_at_pretty,
+    ):
         self.title = title
         self.price = price
         self.image_url = image_url
