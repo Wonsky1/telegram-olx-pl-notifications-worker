@@ -8,15 +8,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Type
+from typing import TYPE_CHECKING
 
 import pytz
-from olx_db import ItemRecord, MonitoringTask
-from sqlalchemy.orm import Session
 
 from models import Item
 from tools.processing.description import DescriptionSummarizer
 from tools.scraping.base import BaseScraper
+
+if TYPE_CHECKING:
+    from clients.topn_db_client import TopnDbClient
 
 logger = logging.getLogger(__name__)
 
@@ -26,61 +27,80 @@ class ItemMonitor:
 
     def __init__(
         self,
-        db: Session,
-        scraper_cls: Type[BaseScraper],
+        db_client: "TopnDbClient",
+        scraper_cls: type[BaseScraper],
         cycle_sleep_seconds: int = 3,
     ) -> None:
-        self.db = db
+        self.db_client = db_client
         self.scraper: BaseScraper = scraper_cls()
         self.summarizer = DescriptionSummarizer()
         self.cycle_sleep_seconds = cycle_sleep_seconds
 
     async def run_once(self):
         """Scrape each task URL once and persist new items."""
-        distinct_urls = self.db.query(MonitoringTask.url).distinct().all()
-        logger.info(
-            "ItemMonitor starting scraping loop for %s URLs", len(distinct_urls)
-        )
+        try:
+            # Get all tasks from the API
+            tasks_response = await self.db_client.get_all_tasks()
+            tasks = tasks_response.get("tasks", [])
 
-        for (url,) in distinct_urls:
-            try:
-                existing_urls = {u for (u,) in self.db.query(ItemRecord.item_url).all()}
-                new_items = await self.scraper.fetch_new_items(
-                    url=url,
-                    existing_urls=existing_urls,
-                    summarizer=self.summarizer,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed fetching items for %s: %s", url, exc, exc_info=True
-                )
-                continue
+            # Extract distinct URLs
+            distinct_urls = list({task["url"] for task in tasks})
+            logger.info(
+                "ItemMonitor starting scraping loop for %s URLs", len(distinct_urls)
+            )
 
-            self._persist_items(new_items, source_url=url)
-            logger.info("URL %s processed; added %s new items", url, len(new_items))
+            for url in distinct_urls:
+                try:
+                    # Get existing items for this source URL
+                    items_response = await self.db_client.get_items_by_source_url(
+                        url, limit=10000
+                    )
+                    existing_items = items_response.get("items", [])
+                    existing_urls = {item["item_url"] for item in existing_items}
 
-            await asyncio.sleep(self.cycle_sleep_seconds)
+                    new_items = await self.scraper.fetch_new_items(
+                        url=url,
+                        existing_urls=existing_urls,
+                        summarizer=self.summarizer,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Failed fetching items for %s: %s", url, exc, exc_info=True
+                    )
+                    continue
 
-        logger.info("ItemMonitor finished all URLs")
+                await self._persist_items(new_items, source_url=url)
+                logger.info("URL %s processed; added %s new items", url, len(new_items))
 
-    def _persist_items(self, items: list[Item], source_url: str):
+                await asyncio.sleep(self.cycle_sleep_seconds)
+
+            logger.info("ItemMonitor finished all URLs")
+        except Exception as exc:
+            logger.error("Error in run_once: %s", exc, exc_info=True)
+            raise
+
+    async def _persist_items(self, items: list[Item], source_url: str):
         poland_tz = pytz.timezone("Europe/Warsaw")
         for item in items:
-            item_record = ItemRecord(
-                item_url=item.item_url,
-                title=item.title,
-                price=item.price,
-                location=item.location,
-                created_at=item.created_at,
-                created_at_pretty=item.created_at_pretty,
-                image_url=item.image_url,
-                description=item.description,
-                source_url=source_url,
-                first_seen=datetime.now(poland_tz).replace(tzinfo=None),
-            )
-            self.db.add(item_record)
-            self.db.commit()
-            logger.info("New item persisted: %s | %s", item.title, item.item_url)
+            item_data = {
+                "item_url": item.item_url,
+                "title": item.title,
+                "price": item.price,
+                "location": item.location,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+                "created_at_pretty": item.created_at_pretty,
+                "image_url": item.image_url,
+                "description": item.description,
+                "source_url": source_url,
+                "first_seen": datetime.now(poland_tz).replace(tzinfo=None).isoformat(),
+            }
+            try:
+                await self.db_client.create_item(item_data)
+                logger.info("New item persisted: %s | %s", item.title, item.item_url)
+            except Exception as exc:
+                logger.error(
+                    "Failed to persist item %s: %s", item.item_url, exc, exc_info=True
+                )
 
     async def close(self):
         await self.scraper.close()

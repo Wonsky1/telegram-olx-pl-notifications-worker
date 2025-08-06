@@ -20,18 +20,17 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", case_sensitive=True
     )
 
-    URL: str
-
-    DEFAULT_LAST_MINUTES_GETTING: int = 45
-    CYCLE_FREQUENCY_SECONDS: int = 30
-
-    OLX_DB_URL: str
+    TOPN_DB_BASE_URL: str
 
     # Model Configuration
     GROQ_API_KEY: Optional[str] = None
     GROQ_MODEL_NAME: Optional[str] = None
 
     GENERATIVE_MODEL: Optional[ChatGroq] = None
+
+    CYCLE_FREQUENCY_SECONDS: int = 10
+
+    DEFAULT_LAST_MINUTES_GETTING: int = 45
 
     @field_validator("GENERATIVE_MODEL")
     def generative_model(

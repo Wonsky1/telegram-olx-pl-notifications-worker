@@ -1,7 +1,6 @@
 python-dotenv
 httpx[http2]
 beautifulsoup4
-olx-db-wonsky
 pydantic-settings
 pytz
 

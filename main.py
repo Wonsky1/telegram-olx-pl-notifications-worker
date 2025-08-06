@@ -2,8 +2,7 @@ import asyncio
 import logging
 import sys
 
-from olx_db import get_db, init_db
-
+from clients import close_client, topn_db_client
 from core.config import settings
 from tools.monitoring.monitor import ItemMonitor
 from tools.scraping.olx import OLXScraper
@@ -20,12 +19,9 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-init_db()
-db = next(get_db())
-
 
 async def worker_main():
-    monitor = ItemMonitor(db=db, scraper_cls=OLXScraper)
+    monitor = ItemMonitor(db_client=topn_db_client, scraper_cls=OLXScraper)
     try:
         while True:
             try:
@@ -42,10 +38,14 @@ async def worker_main():
         await monitor.close()
 
 
-if __name__ == "__main__":
+async def main():
     try:
         logger.info("Starting OLX item notification worker")
-        asyncio.run(worker_main())
+        await worker_main()
     finally:
         logger.info("Shutting down OLX item notification worker")
-        db.close()
+        await close_client()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
