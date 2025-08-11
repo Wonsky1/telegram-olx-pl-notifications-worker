@@ -82,6 +82,13 @@ class ItemMonitor:
     async def _persist_items(self, items: list[Item], source_url: str):
         poland_tz = pytz.timezone("Europe/Warsaw")
         for item in items:
+            if "otodom.pl" in item.item_url:
+                source = "Otodom"
+            elif "olx.pl" in item.item_url:
+                source = "OLX"
+            else:
+                source = "OLX"
+
             item_data = {
                 "item_url": item.item_url,
                 "title": item.title,
@@ -92,6 +99,7 @@ class ItemMonitor:
                 "image_url": item.image_url,
                 "description": item.description,
                 "source_url": source_url,
+                "source": source,
                 "first_seen": datetime.now(poland_tz).replace(tzinfo=None).isoformat(),
             }
             try:
